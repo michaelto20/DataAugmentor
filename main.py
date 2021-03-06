@@ -8,16 +8,20 @@ def augment_data(image, bboxes, class_labels):
     h,w,_ = image.shape
     crop_width = int(w * 0.9)
     crop_height = int(h * 0.9)
-    min_area = crop_height * crop_width
+    min_area = int(crop_height * crop_width * 0.5)
     for i in range(10):
         transform = A.Compose([
             A.RandomCrop(width=crop_width, height=crop_height),
             A.HorizontalFlip(p=0.5),
-            A.RandomBrightnessContrast(p=0.2),
+            A.RandomBrightnessContrast(p=0.5),
+            A.IAAAffine(p=0.5),
+            A.ShiftScaleRotate(p=0.75),
+            A.PadIfNeeded(min_height=100, min_width=200, border_mode=cv2.BORDER_CONSTANT, value=[255,255,255])
         ], bbox_params=A.BboxParams(format='yolo', min_area=min_area - 1, min_visibility=0.2, label_fields=['class_labels']))
 
         transformed = transform(image=image, bboxes=bboxes, class_labels=class_labels)
-        transformed_images.append(transformed)
+        if len(transformed['bboxes']) != 0:
+            transformed_images.append(transformed)
     return transformed_images
 
 def get_augmentation(path_to_bboxes, path_to_images):
@@ -43,13 +47,35 @@ def get_augmentation(path_to_bboxes, path_to_images):
 def save_augmentations(augmentations):
     count = 0
     for transformed in augmentations:
-        img = transformed['image']
-        image_path = os.path.join('output', f'{count}.png')
-        cv2.imwrite(image_path, img)
+        image_path_base = os.path.join('output','images')
+        bbox_path_base = os.path.join('output','labels')
+        # save augmented image
+        cv2.imwrite(os.path.join(image_path_base, f'{count}.png'), transformed['image'])
+
+        # save bbox coordinates
+        with open(os.path.join(bbox_path_base, f'{count}.txt'), 'w') as handler:
+            # put label in first position, YOLO style
+            if len(transformed['bboxes']) > 1:
+                print('got here')
+            bbox_list = list(transformed['bboxes'][0])
+            bbox = [bbox_list[-1]] + bbox_list[:-1]
+            for i in bbox:
+                handler.write(f'{i} ')
+
         count += 1
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        image_path = os.path.join('output', f'{count}.png')
-        cv2.imwrite(image_path, img)
+
+        # convert augmented image back into original color and save
+        cv2.imwrite(os.path.join(image_path_base, f'{count}.png'), cv2.cvtColor(transformed['image'], cv2.COLOR_BGR2RGB))
+
+        # save bbox coordinates
+        # save bbox coordinates
+        with open(os.path.join(bbox_path_base, f'{count}.txt'), 'w') as handler:
+            # put label in first position, YOLO style
+            bbox_list = list(transformed['bboxes'][0])
+            bbox = [bbox_list[-1]] + bbox_list[:-1]
+            for i in bbox:
+                handler.write(f'{i} ')
+
         count += 1
 
 
@@ -68,17 +94,29 @@ def get_bbox(bbox_filepath):
 
 def cleanup_output_folder():
     '''
-    Iterate through output folder and delete everthingy
+    Iterate through output folder and delete everthing
     '''
-    files = glob.glob('output/*')
+    files = glob.glob('output/images/*')
+    for f in files:
+        os.remove(f)
+    
+    files = glob.glob('output/labels/*')
     for f in files:
         os.remove(f)
 
 if __name__ == "__main__":
+    # ASSUMES ONE BOUNDING BOX PER IMAGE
+
+    print('Cleaning output folder')
     cleanup_output_folder()
     
     path_to_images = r'C:\Development\labelImg\output'
     path_to_bboxes = r'C:\Development\labelImg\numbers_annotated'
+
+    print('Getting augmentated images')
     augmentations = get_augmentation(path_to_bboxes, path_to_images)
 
+    print('Saving augmented images')
     save_augmentations(augmentations)
+
+    print('Finished')
